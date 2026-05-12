@@ -7,7 +7,6 @@
 // JSON-RPC 2.0 framing with newline-delimited messages (Codex + Claude both
 // accept this transport when invoking an MCP server as a child process).
 
-import { createInterface } from "node:readline";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -88,12 +87,15 @@ function handle(req: JsonRpcRequest): JsonRpcResponse | null {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "claudex", version: "0.2.4" },
+        serverInfo: { name: "claudex", version: "0.2.5" },
       },
     };
   }
   if (req.method === "notifications/initialized") {
     return null; // no response for notifications
+  }
+  if (req.method === "ping") {
+    return { jsonrpc: "2.0", id: req.id ?? null, result: {} };
   }
   if (req.method === "tools/list") {
     return { jsonrpc: "2.0", id: req.id ?? null, result: { tools: TOOLS } };
@@ -142,15 +144,92 @@ function handle(req: JsonRpcRequest): JsonRpcResponse | null {
   };
 }
 
-const rl = createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  if (!line.trim()) return;
-  let req: JsonRpcRequest;
-  try {
-    req = JSON.parse(line);
-  } catch {
+let framing: "headers" | "lines" = "lines";
+let buffer = Buffer.alloc(0);
+
+function log(message: string): void {
+  process.stderr.write(`[claudex-mcp] ${message}\n`);
+}
+
+function send(res: JsonRpcResponse): void {
+  const body = JSON.stringify(res);
+  if (framing === "headers") {
+    process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
     return;
   }
-  const res = handle(req);
-  if (res) process.stdout.write(JSON.stringify(res) + "\n");
+  process.stdout.write(`${body}\n`);
+}
+
+function handleMessage(raw: string): void {
+  if (!raw.trim()) return;
+  let req: JsonRpcRequest;
+  try {
+    req = JSON.parse(raw);
+  } catch (err) {
+    log(`ignored invalid json: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  try {
+    const res = handle(req);
+    if (res) send(res);
+  } catch (err) {
+    send({
+      jsonrpc: "2.0",
+      id: req.id ?? null,
+      error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
+
+function headerEndIndex(input: Buffer): { index: number; length: number } {
+  const crlf = input.indexOf("\r\n\r\n");
+  if (crlf !== -1) return { index: crlf, length: 4 };
+  const lf = input.indexOf("\n\n");
+  return lf === -1 ? { index: -1, length: 0 } : { index: lf, length: 2 };
+}
+
+function pump(): void {
+  while (buffer.length > 0) {
+    const prefix = buffer.toString("utf8", 0, Math.min(buffer.length, 80));
+    const maybeHeaders = /^Content-Length:/i.test(prefix);
+    const header = headerEndIndex(buffer);
+    if (maybeHeaders) {
+      if (header.index === -1) return;
+      framing = "headers";
+      const headerText = buffer.toString("utf8", 0, header.index);
+      const match = /^Content-Length:\s*(\d+)/im.exec(headerText);
+      if (!match) {
+        log("missing Content-Length header");
+        buffer = Buffer.alloc(0);
+        return;
+      }
+      const length = Number(match[1]);
+      const bodyStart = header.index + header.length;
+      const bodyEnd = bodyStart + length;
+      if (buffer.length < bodyEnd) return;
+      const body = buffer.toString("utf8", bodyStart, bodyEnd);
+      buffer = buffer.subarray(bodyEnd);
+      handleMessage(body);
+      continue;
+    }
+
+    const newline = buffer.indexOf("\n");
+    if (newline === -1) return;
+    const line = buffer.toString("utf8", 0, newline).trim();
+    buffer = buffer.subarray(newline + 1);
+    handleMessage(line);
+  }
+}
+
+process.stdin.on("data", (chunk: Buffer) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  pump();
 });
+
+process.stdin.on("error", (err) => log(`stdin error: ${err.message}`));
+process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EPIPE") process.exit(0);
+  log(`stdout error: ${err.message}`);
+});
+process.on("uncaughtException", (err) => log(`uncaughtException: ${err.stack ?? err.message}`));
+process.on("unhandledRejection", (err) => log(`unhandledRejection: ${String(err)}`));

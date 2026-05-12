@@ -73,6 +73,7 @@ export interface SessionScanOptions {
   claudeDir?: string;
   codexDir?: string;
   limit?: number;
+  fileLimitPerSource?: number;
 }
 
 export interface ToolAvailability {
@@ -107,7 +108,11 @@ interface CodexRateLimits {
 }
 
 function walkJsonl(root: string): string[] {
-  const out: string[] = [];
+  return walkJsonlEntries(root).map((entry) => entry.path);
+}
+
+function walkJsonlEntries(root: string): Array<{ path: string; mtimeMs: number }> {
+  const entriesOut: Array<{ path: string; mtimeMs: number }> = [];
   function recur(dir: string): void {
     let entries: string[];
     try {
@@ -124,11 +129,13 @@ function walkJsonl(root: string): string[] {
         continue;
       }
       if (stats.isDirectory()) recur(path);
-      else if (stats.isFile() && path.endsWith(".jsonl")) out.push(path);
+      else if (stats.isFile() && path.endsWith(".jsonl")) {
+        entriesOut.push({ path, mtimeMs: stats.mtimeMs });
+      }
     }
   }
   recur(root);
-  return out;
+  return entriesOut;
 }
 
 function parseJson(line: string): any | null {
@@ -505,12 +512,26 @@ export function scanAllSessions(opts: SessionScanOptions = {}): SessionSummary[]
   const claudeDir = opts.claudeDir ?? CLAUDE_PROJECTS_DIR;
   const codexDir = opts.codexDir ?? CODEX_SESSIONS_DIR;
   const sessions: SessionSummary[] = [];
+  const fileLimit = opts.fileLimitPerSource;
 
-  for (const file of walkJsonl(claudeDir)) {
+  const claudeFiles = typeof fileLimit === "number"
+    ? walkJsonlEntries(claudeDir)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .slice(0, fileLimit)
+        .map((entry) => entry.path)
+    : walkJsonl(claudeDir);
+  const codexFiles = typeof fileLimit === "number"
+    ? walkJsonlEntries(codexDir)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .slice(0, fileLimit)
+        .map((entry) => entry.path)
+    : walkJsonl(codexDir);
+
+  for (const file of claudeFiles) {
     const session = scanClaudeFile(file);
     if (session) sessions.push(session);
   }
-  for (const file of walkJsonl(codexDir)) {
+  for (const file of codexFiles) {
     const session = scanCodexFile(file);
     if (session) sessions.push(session);
   }

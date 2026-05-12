@@ -348,6 +348,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     let data = null;
     let selectedKey = null;
     let sourceFilter = 'all';
+    let refreshInFlight = false;
     const $ = id => document.getElementById(id);
     const els = {
       q: $('q'), folders: $('folders'), title: $('title'), meta: $('meta'), info: $('info'),
@@ -499,8 +500,14 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       return res.json();
     }
     async function refresh() {
-      data = await apiSessions();
-      render();
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        data = await apiSessions();
+        render();
+      } finally {
+        refreshInFlight = false;
+      }
     }
     async function openSelected(target) {
       const session = selectedSession();
@@ -522,7 +529,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     els.openClaude.addEventListener('click', () => openSelected('claude'));
     els.openCodex.addEventListener('click', () => openSelected('codex'));
     refresh().catch(err => showToast(String(err)));
-    setInterval(refresh, 10000);
+    setInterval(refresh, 800);
   </script>
 </body>
 </html>`;

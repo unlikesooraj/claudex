@@ -675,7 +675,7 @@ export function getNativeSessionPayload(): NativeSessionsPayload {
     claude: appInfo("claude", claudeNative),
     codex: appInfo("codex", codexNative),
   };
-  const transcripts = scanAllSessions();
+  const transcripts = scanAllSessions({ fileLimitPerSource: 40 });
   const claudeAppRoot = findClaudeAppSessionRoot();
   const claudeAppSessions = readClaudeAppSessions(claudeAppRoot);
   const codexWorkers = processes.filter(isCodexWorkerProcess);
