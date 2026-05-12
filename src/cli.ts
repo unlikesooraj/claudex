@@ -29,7 +29,7 @@ const program = new Command();
 program
   .name("claudex")
   .description("Seamless session bridge between Claude Code and Codex CLI.")
-  .version("0.1.0");
+  .version("0.2.0");
 
 program
   .command("init")
@@ -116,6 +116,52 @@ program
     for (const r of rows) {
       console.log(`  ${r.lastSource.padEnd(7)} ${r.lastTs}  ${r.cwd}`);
     }
+  });
+
+program
+  .command("app")
+  .description("Open the packaged Claudex desktop app.")
+  .option("--dev-tools", "Open Electron developer tools.")
+  .option("--wait", "Run Electron attached to this terminal for debugging.")
+  .action(async (opts) => {
+    const { launchDesktopApp } = await import("./desktopLauncher.js");
+    launchDesktopApp({ devTools: opts.devTools === true, wait: opts.wait === true });
+  });
+
+program
+  .command("install-app")
+  .description("Install Start Menu and Desktop shortcuts for the Claudex app.")
+  .action(async () => {
+    const { installAppShortcuts } = await import("./appShortcut.js");
+    const result = installAppShortcuts();
+    if (!result.ok) {
+      console.error(`Could not install app shortcut: ${result.reason}`);
+      process.exit(1);
+    }
+    console.log("Claudex app shortcuts installed:");
+    for (const path of result.paths) console.log(`  ${path}`);
+  });
+
+program
+  .command("ui")
+  .description("Open the Claudex desktop app. Use --web for the old localhost dashboard.")
+  .option("--web", "Serve the dashboard through localhost instead of the desktop app.")
+  .option("-p, --port <port>", "Localhost port to bind.", "37373")
+  .option("--no-open", "Start the dashboard server without opening a browser.")
+  .option("--dev-tools", "Open Electron developer tools.")
+  .action(async (opts) => {
+    if (!opts.web) {
+      const { launchDesktopApp } = await import("./desktopLauncher.js");
+      launchDesktopApp({ devTools: opts.devTools === true });
+      return;
+    }
+    const { startDashboard } = await import("./dashboard.js");
+    const port = Number(opts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      console.error(`invalid port: ${opts.port}`);
+      process.exit(1);
+    }
+    await startDashboard({ port, open: opts.open !== false });
   });
 
 program

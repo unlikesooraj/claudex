@@ -1,6 +1,6 @@
 {
   "name": "claudex",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Connect Claude Code with Codex CLI. Local session bridge that lets Claude Code and OpenAI Codex CLI share context across sessions — switch tools mid-thought, never lose your place. Auto-syncs via AGENTS.md, SessionStart / UserPromptSubmit hooks, and a built-in MCP server. No API keys, no cloud.",
   "license": "MIT",
   "type": "module",
@@ -54,9 +54,10 @@
   },
   "dependencies": {
     "chokidar": "^4.0.1",
+    "commander": "^12.1.0",
+    "electron": "^39.8.10",
     "js-tiktoken": "^1.0.16",
-    "smol-toml": "^1.3.0",
-    "commander": "^12.1.0"
+    "smol-toml": "^1.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

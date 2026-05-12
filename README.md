@@ -79,6 +79,7 @@ If you arrived here from a Google or HN search, this project is the answer to:
   2. **Every user prompt (Claude)** — `UserPromptSubmit` hook re-injects rolling context, gated by mtime so token cost is zero when nothing has changed.
   3. **On-demand mid-session** — built-in MCP server (`claudex_get_context`, `claudex_get_plan`, `claudex_recent_files`) registered into both Claude Code's `mcpServers` and Codex's `mcp_servers`. The model can pull fresh state any time a user references something it doesn't see.
 - **Auto-discovers every project.** On install, Claudex scans your entire `~/.claude/projects` and `~/.codex/sessions` history and builds a context for every folder you've ever opened in either tool. Zero per-project setup. Ever.
+- **Packaged desktop app.** `claudex app` opens the bundled Claudex desktop window: all Claude Code + Codex sessions, local usage signals, token/cache observations, and one-click resume / cross-tool launch actions.
 - **Project keying by working directory.** Both tools' transcripts merge automatically as long as they were opened in the same folder. SHA-256 hash of the cwd is the join key.
 - **Rolling 2,000-token context window per project.** Token-counted with `cl100k_base`, configurable budget. Designed to fit comfortably inside any model's context with room to spare.
 - **Active plan extraction.** Detects *"the plan is…"* / numbered steps / markdown checklists from recent assistant turns and surfaces them at the top of the injected context.
@@ -112,6 +113,8 @@ Open any project in either tool. Claudex is already working.
 ```bash
 claudex status       # daemon + tracked projects
 claudex projects     # full project list
+claudex app          # packaged desktop app + one-click resume
+claudex install-app  # Start Menu + Desktop shortcuts on Windows
 claudex context      # what the next session in this folder will see
 claudex log          # tail the daemon log
 ```
@@ -215,6 +218,9 @@ Yes — everything is local. No network calls. No telemetry. Redaction rules to 
 | `claudex sync` | Re-ingest every existing Claude Code + Codex CLI session (idempotent). |
 | `claudex status` | Show daemon status and recently tracked projects. |
 | `claudex projects` | Full list of projects the bridge knows about. |
+| `claudex app [--dev-tools]` | Open the packaged desktop app for all Claude Code + Codex sessions, usage signals, and one-click resume / cross-tool handoff. |
+| `claudex install-app` | Install Windows Start Menu and Desktop shortcuts that launch `claudex app` without exposing package `.js` internals. |
+| `claudex ui [--web] [--port 37373] [--no-open]` | Alias for `claudex app`; use `--web` for the old localhost dashboard fallback. |
 | `claudex context [--cwd <path>]` | Print the rolling context for a project. |
 | `claudex rebuild [--budget 2000]` | Force-rebuild the context for the current working directory. |
 | `claudex log [-n 60]` | Tail the daemon log. |
