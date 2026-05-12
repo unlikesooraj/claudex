@@ -1,6 +1,6 @@
 import type { Turn, ToolCall, ToolResult } from "../types.js";
 import { countTokens } from "../tokens.js";
-import { scrubTurnText } from "../scrub.js";
+import { scrubTurnText, scrubDeep, scrubSecrets } from "../scrub.js";
 
 // Schema observed from real Claude Code sessions (v2.1.x):
 //   { type:"user"|"assistant"|"attachment", message:{role, content}, uuid, timestamp, sessionId, cwd, ... }
@@ -117,7 +117,10 @@ export function parseClaudeLine(line: string): Turn | null {
   const role = isToolOnlyUser ? "tool" : (raw.type as "user" | "assistant");
 
   const text = scrubTurnText(flat.text);
-  const tokens = countTokens(text) + countTokens(flat.thinking);
+  const thinking = flat.thinking ? scrubSecrets(flat.thinking) : "";
+  const toolCalls = flat.toolCalls.map((c) => ({ ...c, input: scrubDeep(c.input) }));
+  const toolResults = flat.toolResults.map((r) => ({ ...r, output: scrubSecrets(r.output) }));
+  const tokens = countTokens(text) + countTokens(thinking);
 
   return {
     id: raw.uuid ?? `claude-${Date.now()}-${Math.random()}`,
@@ -127,9 +130,9 @@ export function parseClaudeLine(line: string): Turn | null {
     cwd: raw.cwd ?? "",
     role,
     text,
-    thinking: flat.thinking || undefined,
-    toolCalls: flat.toolCalls.length ? flat.toolCalls : undefined,
-    toolResults: flat.toolResults.length ? flat.toolResults : undefined,
+    thinking: thinking || undefined,
+    toolCalls: toolCalls.length ? toolCalls : undefined,
+    toolResults: toolResults.length ? toolResults : undefined,
     tokens,
   };
 }

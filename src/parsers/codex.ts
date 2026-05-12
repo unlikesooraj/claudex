@@ -1,6 +1,6 @@
 import type { Turn, ToolCall, ToolResult } from "../types.js";
 import { countTokens } from "../tokens.js";
-import { scrubTurnText } from "../scrub.js";
+import { scrubTurnText, scrubDeep, scrubSecrets } from "../scrub.js";
 
 // Schema observed from real Codex CLI rollouts (0.123.x):
 //   { timestamp, type: "session_meta"|"event_msg"|"response_item", payload }
@@ -104,7 +104,7 @@ export function parseCodexLine(line: string, state: CodexParseState): Turn | nul
       const call: ToolCall = {
         id: p.call_id ?? "",
         name: p.name ?? "",
-        input: parsedArgs,
+        input: scrubDeep(parsedArgs),
       };
       return {
         id: p.call_id ?? idBase,
@@ -126,7 +126,7 @@ export function parseCodexLine(line: string, state: CodexParseState): Turn | nul
       const isError = typeof p.output === "object" && p.output?.success === false;
       const result: ToolResult = {
         toolCallId: p.call_id ?? "",
-        output,
+        output: scrubSecrets(output),
         isError,
       };
       return {
