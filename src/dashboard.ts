@@ -1,9 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { platform } from "node:os";
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type SessionSource } from "./sessionIndex.js";
 import { getSessionsPayload } from "./sessionPayload.js";
 import { openSession } from "./sessionLauncher.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PKG_ROOT = resolve(__dirname, "..");
+const ASSET_DIR = join(PKG_ROOT, "assets");
 
 export interface DashboardOptions {
   host?: string;
@@ -32,6 +40,23 @@ function text(res: ServerResponse, status: number, body: string, contentType: st
     "cache-control": "no-store",
   });
   res.end(body);
+}
+
+function asset(res: ServerResponse, path: string): boolean {
+  if (!path.startsWith("/assets/")) return false;
+  const name = path.slice("/assets/".length);
+  if (!/^[a-z0-9_.-]+$/i.test(name)) return false;
+  const filePath = join(ASSET_DIR, name);
+  if (!existsSync(filePath)) return false;
+  const ext = name.split(".").pop()?.toLowerCase();
+  const contentType =
+    ext === "png" ? "image/png" : ext === "svg" ? "image/svg+xml" : "application/octet-stream";
+  res.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": "no-store",
+  });
+  res.end(readFileSync(filePath));
+  return true;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -114,6 +139,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<void>
         text(res, 200, DASHBOARD_HTML, "text/html; charset=utf-8");
         return;
       }
+      if (req.method === "GET" && asset(res, url.pathname)) return;
       if (req.method === "GET" && url.pathname === "/api/sessions") {
         json(res, 200, sessionsPayload());
         return;
@@ -159,10 +185,13 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       --text-4: #5f6b78;
       --codex: #7fb0ff;
       --claude: #ff9b72;
-      --local: #69d58c;
+      --brand-navy: #071846;
+      --brand-purple: #8a51f7;
+      --brand-orange: #ff7c32;
+      --local: #ff8f3d;
       --warn: #e6bf63;
       --bad: #ff776f;
-      --focus: #8ed3ff;
+      --focus: #a765ff;
       --radius: 8px;
     }
     * { box-sizing: border-box; }
@@ -214,15 +243,11 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     .brand-mark {
       width: 30px;
       height: 30px;
-      display: grid;
-      place-items: center;
-      border: 1px solid rgba(105,213,140,.32);
+      display: block;
+      object-fit: contain;
+      border: 1px solid rgba(255,124,50,.3);
       border-radius: 7px;
-      background: rgba(105,213,140,.08);
-      color: var(--local);
-      font-weight: 800;
-      font-size: 12px;
-      letter-spacing: 0;
+      background: rgba(138,81,247,.1);
     }
     .brand-title { min-width: 0; }
     .brand-title strong, .brand-title span {
@@ -346,7 +371,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     .folder-button.active {
       background: var(--surface-2);
       border-color: var(--line-strong);
-      box-shadow: inset 3px 0 0 var(--local);
+      box-shadow: inset 3px 0 0 var(--brand-orange);
     }
     .folder-name {
       min-width: 0;
@@ -620,7 +645,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
   <main class="window">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" id="brandMark">CX</div>
+        <img class="brand-mark" id="brandMark" src="assets/claudex-icon.png" alt="" />
         <div class="brand-title"><strong>Claudex</strong><span>native bridge</span></div>
       </div>
       <label class="search">Search <input id="q" placeholder="open chats, folders, session ids" /></label>

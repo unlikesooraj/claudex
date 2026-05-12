@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_HTML } from "./dashboard.js";
 import { getSessionsPayload } from "./sessionPayload.js";
@@ -9,6 +9,8 @@ import { CLAUDEX_HOME } from "./paths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const PKG_ROOT = resolve(__dirname, "..");
+const ASSET_DIR = join(PKG_ROOT, "assets");
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -21,9 +23,29 @@ function appLog(message: string): void {
   }
 }
 
+function appIconPath(): string | undefined {
+  const iconPath = join(ASSET_DIR, "claudex-icon.ico");
+  return existsSync(iconPath) ? iconPath : undefined;
+}
+
+function installRuntimeAssets(): void {
+  const runtimeAssetDir = join(CLAUDEX_HOME, "assets");
+  mkdirSync(runtimeAssetDir, { recursive: true });
+  for (const name of [
+    "claudex-icon.png",
+    "claudex-logo-transparent.png",
+    "claudex-mark.svg",
+    "claudex-wordmark.svg",
+  ]) {
+    const src = join(ASSET_DIR, name);
+    if (existsSync(src)) copyFileSync(src, join(runtimeAssetDir, name));
+  }
+}
+
 function createWindow(): void {
   appLog("creating window");
   mkdirSync(CLAUDEX_HOME, { recursive: true });
+  installRuntimeAssets();
   const htmlPath = join(CLAUDEX_HOME, "app.html");
   writeFileSync(htmlPath, DASHBOARD_HTML, "utf8");
 
@@ -35,6 +57,7 @@ function createWindow(): void {
     title: "Claudex",
     backgroundColor: "#0f1114",
     autoHideMenuBar: true,
+    icon: appIconPath(),
     webPreferences: {
       preload: join(__dirname, "appPreload.js"),
       contextIsolation: true,

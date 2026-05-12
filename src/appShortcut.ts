@@ -93,9 +93,10 @@ export function installAppShortcuts(): AppShortcutResult {
   const desktop = join(homedir(), "Desktop", "Claudex.lnk");
   const electronExe = join(PKG_ROOT, "node_modules", "electron", "dist", "electron.exe");
   const appMainPath = join(PKG_ROOT, "dist", "appMain.js");
+  const brandIcon = join(PKG_ROOT, "assets", "claudex-icon.ico");
   const target = existsSync(electronExe) ? electronExe : windowsSystemExe("wscript.exe");
   const args = existsSync(electronExe) ? `"${appMainPath}"` : `"${writeHiddenNodeLauncher(cliPath)}"`;
-  const icon = existsSync(electronExe) ? electronExe : cliPath;
+  const icon = existsSync(brandIcon) ? brandIcon : existsSync(electronExe) ? electronExe : cliPath;
   const ps = shortcutScript([startMenu, desktop], target, args, PKG_ROOT, icon);
 
   const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], {

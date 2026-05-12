@@ -29,7 +29,7 @@ const program = new Command();
 program
   .name("claudex")
   .description("Seamless session bridge between Claude Code and Codex CLI.")
-  .version("0.2.1");
+  .version("0.2.2");
 
 program
   .command("init")
