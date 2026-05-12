@@ -49,7 +49,7 @@ function runPowerShell(script: string): void {
 
 function startUri(uri: string): void {
   if (platform() === "win32") {
-    runPowerShell(`Start-Process -FilePath ${psString(uri)}`);
+    spawnDetached("explorer.exe", [uri]);
     return;
   }
   if (platform() === "darwin") {
@@ -86,18 +86,31 @@ function openCodexChat(session: OpenAppSession): OpenSessionResult {
   };
 }
 
-function focusClaudeChat(session: OpenAppSession): OpenSessionResult {
-  startUri("claude:");
+function claudeResumeUrl(session: OpenAppSession): string {
+  const cliSessionId = session.cliSessionId ?? session.sessionId;
+  return `claude://resume?session=${encodeURIComponent(cliSessionId)}`;
+}
+
+function claudeCodeNewUrl(cwd?: string): string {
+  const params = new URLSearchParams();
+  if (cwd) params.set("folder", cwd);
+  const query = params.toString();
+  return `claude://code/new${query ? `?${query}` : ""}`;
+}
+
+function openClaudeChat(session: OpenAppSession): OpenSessionResult {
+  const uri = session.launch.url ?? claudeResumeUrl(session);
+  startUri(uri);
   focusWindow("Claude");
   return {
     ok: true,
     source: session.source,
     target: "claude",
     cwd: session.cwd,
-    action: "focus-app",
-    exact: false,
-    launched: "claude:",
-    note: "Focused Claude desktop. Claude desktop does not expose a confirmed local chat deeplink.",
+    action: "open-chat",
+    exact: true,
+    launched: uri,
+    note: "Opened the Claude desktop Claude Code session.",
   };
 }
 
@@ -131,17 +144,20 @@ function openCodexProject(session: OpenAppSession, app: NativeAppInfo): OpenSess
 }
 
 function openClaudeApp(session: OpenAppSession): OpenSessionResult {
-  startUri("claude:");
+  const uri = session.cwdExists ? claudeCodeNewUrl(session.cwd) : "claude:";
+  startUri(uri);
   focusWindow("Claude");
   return {
     ok: true,
     source: session.source,
     target: "claude",
     cwd: session.cwd,
-    action: "focus-app",
+    action: session.cwdExists ? "open-project" : "focus-app",
     exact: false,
-    launched: "claude:",
-    note: "Focused Claude desktop. Folder handoff needs a Claude desktop deeplink or native API.",
+    launched: uri,
+    note: session.cwdExists
+      ? "Opened Claude desktop with the connected folder."
+      : "Opened Claude desktop.",
   };
 }
 
@@ -169,7 +185,7 @@ export function openSession(request: OpenSessionRequest): OpenSessionResult {
       return openCodexProject(session, payload.apps.codex);
     }
     if (target === "claude") {
-      if (session.source === "claude") return focusClaudeChat(session);
+      if (session.source === "claude") return openClaudeChat(session);
       return openClaudeApp(session);
     }
     return { ok: false, error: `Unknown target: ${String(target)}` };

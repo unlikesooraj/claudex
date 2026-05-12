@@ -827,7 +827,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     }
     function chatCard(session) {
       const selected = session.key === selectedKey ? ' selected' : '';
-      const exact = session.launch?.exact ? 'exact chat' : 'focus app';
+      const exact = session.launch?.exact ? 'exact chat' : 'open app';
       const model = [session.model, session.effort].filter(Boolean).join(' | ') || 'model unknown';
       return '<article class="chat-card' + selected + '" data-key="' + encodeURIComponent(session.key) + '">' +
         '<div class="chat-main">' +
@@ -887,7 +887,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       els.openNative.textContent = 'Open in ' + appName(session.source);
       els.openCodex.textContent = session.source === 'codex' ? 'Codex chat' : 'Codex folder';
       els.openClaude.textContent = session.source === 'claude' ? 'Claude chat' : 'Claude app';
-      const nativeState = session.launch?.exact ? 'Exact chat link' : 'Native app focus';
+      const nativeState = session.launch?.exact ? 'Exact chat link' : 'Open in app';
       const folderState = session.cwdExists ? 'folder exists' : 'folder missing';
       els.details.innerHTML =
         '<h2>' + escapeHtml(session.title) + '</h2>' +

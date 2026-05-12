@@ -1,6 +1,6 @@
 {
   "name": "claudex",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Connect Claude Code with Codex CLI. Local session bridge that lets Claude Code and OpenAI Codex CLI share context across sessions — switch tools mid-thought, never lose your place. Auto-syncs via AGENTS.md, SessionStart / UserPromptSubmit hooks, and a built-in MCP server. No API keys, no cloud.",
   "license": "MIT",
   "type": "module",
