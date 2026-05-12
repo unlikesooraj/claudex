@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
-import { CLAUDE_PROJECTS_DIR, CODEX_SESSIONS_DIR } from "./paths.js";
+import { CLAUDE_PROJECTS_DIR, CODEX_SESSIONS_DIR, DAEMON_LOG } from "./paths.js";
+import { daemonStatus } from "./daemonSupervisor.js";
 import {
   scanAllSessions,
   summarizeAvailability,
@@ -87,6 +88,11 @@ export interface NativeSessionsPayload {
     tracked: number;
   };
   availability: AvailabilitySummary;
+  bridge: {
+    daemonRunning: boolean;
+    daemonPid?: number;
+    daemonLog: string;
+  };
   folders: OpenFolderGroup[];
   sessions: OpenAppSession[];
 }
@@ -127,6 +133,9 @@ const EMPTY_TOKENS: SessionSummary["tokens"] = {
   cacheWrite: 0,
 };
 
+const RECENT_CLAUDE_APP_LIMIT = 18;
+const RECENT_CODEX_APP_LIMIT = 18;
+
 function normalizePath(value: string | undefined): string {
   return (value ?? "").replace(/\//g, "\\").toLowerCase();
 }
@@ -151,6 +160,10 @@ function folderName(cwd: string): string {
   return basename(cwd) || cwd;
 }
 
+function transcriptTitle(transcript: SessionSummary): string {
+  return cleanDisplayText(transcript.lastPrompt) || folderName(transcript.cwd) || shortId(transcript.sessionId);
+}
+
 function shortId(value: string): string {
   return value.length > 12 ? value.slice(0, 12) : value;
 }
@@ -158,8 +171,13 @@ function shortId(value: string): string {
 function cleanDisplayText(value: string | undefined): string | undefined {
   const trimmed = value?.replace(/\s+/g, " ").trim();
   if (!trimmed) return undefined;
+  if (/^</.test(trimmed)) return undefined;
   if (/<command-(name|message|args)>/i.test(trimmed)) return undefined;
-  return trimmed;
+  if (/<(?:heartbeat|automation_id|turn_aborted)\b/i.test(trimmed)) return undefined;
+  if (/^scrum master loop subtask:/i.test(trimmed)) return undefined;
+  if (/^you are .{0,80}\b(?:subtask|reviewer|lead|read-only task)\b/i.test(trimmed)) return undefined;
+  if (/^https?:\/\/\S+(?:\s+https?:\/\/\S+)+/i.test(trimmed)) return undefined;
+  return trimmed.length > 96 ? `${trimmed.slice(0, 93)}...` : trimmed;
 }
 
 function recordTime(value: unknown): number {
@@ -171,6 +189,13 @@ function recordTime(value: unknown): number {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
   return 0;
+}
+
+function activityStateFor(lastActivity: string): SessionSummary["activityState"] {
+  const ageMs = Date.now() - Date.parse(lastActivity);
+  if (ageMs < 5 * 60_000) return "active";
+  if (ageMs < 60 * 60_000) return "recent";
+  return "idle";
 }
 
 function queryNativeProcesses(): NativeProcessInfo[] {
@@ -361,6 +386,28 @@ function chooseClaudeAppSession(
   })[0];
 }
 
+function uniqueClaudeAppSessions(appSessions: ClaudeAppSessionRecord[]): ClaudeAppSessionRecord[] {
+  const ids = new Set(appSessions.map((session) => session.cliSessionId).filter(Boolean) as string[]);
+  return [...ids]
+    .map((id) => chooseClaudeAppSession(appSessions, id))
+    .filter((record): record is ClaudeAppSessionRecord => Boolean(record))
+    .sort((a, b) => recordTime(b.lastActivityAt) - recordTime(a.lastActivityAt));
+}
+
+function uniqueCodexTranscripts(transcripts: SessionSummary[]): SessionSummary[] {
+  const seen = new Set<string>();
+  const out: SessionSummary[] = [];
+  for (const session of transcripts.filter((candidate) => candidate.source === "codex")) {
+    if (session.lastPrompt && !cleanDisplayText(session.lastPrompt)) continue;
+    const key = `${normalizePath(session.cwd)}:${transcriptTitle(session).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(session);
+    if (out.length >= RECENT_CODEX_APP_LIMIT) break;
+  }
+  return out;
+}
+
 function matchTranscript(
   transcripts: SessionSummary[],
   source: SessionSource,
@@ -431,7 +478,7 @@ function buildCodexSession(
   const commandCwd = commandArg(process.commandLine, "--working-dir");
   const transcript = matchTranscript(transcripts, "codex", [sessionId], commandCwd);
   const cwd = commandCwd ?? transcript?.cwd ?? "";
-  const title = transcript?.lastPrompt || folderName(cwd) || `Codex ${shortId(sessionId)}`;
+  const title = cleanDisplayText(transcript?.lastPrompt) || folderName(cwd) || `Codex ${shortId(sessionId)}`;
   return {
     key: `codex:${sessionId}`,
     source: "codex",
@@ -459,48 +506,85 @@ function buildCodexSession(
   };
 }
 
-function buildClaudeSession(
-  process: NativeProcessInfo,
+function buildCodexTranscriptSession(
+  transcript: SessionSummary,
   app: NativeAppInfo,
-  appSessions: ClaudeAppSessionRecord[],
+  worker?: NativeProcessInfo,
+): OpenAppSession {
+  const title = transcriptTitle(transcript);
+  return {
+    key: `codex:${transcript.sessionId}`,
+    source: "codex",
+    appName: "Codex",
+    sessionId: transcript.sessionId,
+    title,
+    cwd: transcript.cwd,
+    cwdExists: transcript.cwdExists,
+    appPid: app.processId,
+    workerPid: worker?.processId,
+    lastActivity: transcript.lastActivity,
+    model: transcript.model,
+    transcriptFile: transcript.filePath,
+    lastPrompt: transcript.lastPrompt,
+    activityState: transcript.activityState,
+    turns: transcript.turns,
+    tokens: transcript.tokens,
+    usage: transcript.usage,
+    launch: {
+      mode: "exact-chat",
+      exact: true,
+      url: codexUrl(transcript.sessionId),
+      note: "Opens the Codex desktop local conversation route.",
+    },
+  };
+}
+
+function latestIso(a: string, b?: string): string {
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+function buildClaudeRecordSession(
+  record: ClaudeAppSessionRecord,
+  app: NativeAppInfo,
   transcripts: SessionSummary[],
+  worker?: NativeProcessInfo,
 ): OpenAppSession | null {
-  const cliSessionId = commandArg(process.commandLine, "--resume");
+  const cliSessionId = record.cliSessionId;
   if (!cliSessionId) return null;
-  const record = chooseClaudeAppSession(appSessions, cliSessionId);
-  const cwd = record?.cwd ?? record?.originCwd ?? "";
+  const cwd = record.cwd ?? record.originCwd ?? "";
   const transcript = matchTranscript(
     transcripts,
     "claude",
-    [cliSessionId, record?.sessionId],
+    [cliSessionId, record.sessionId],
     cwd,
   );
-  const sessionId = record?.sessionId ?? cliSessionId;
-  const recordTitle = cleanDisplayText(record?.title);
+  const recordTitle = cleanDisplayText(record.title);
   const transcriptTitle = cleanDisplayText(transcript?.lastPrompt);
+  const resolvedCwd = cwd || transcript?.cwd || "";
+  const lastActivity = latestIso(toIso(record.lastActivityAt), transcript?.lastActivity);
   const title =
     recordTitle ||
     transcriptTitle ||
-    folderName(cwd || transcript?.cwd || "") ||
+    folderName(resolvedCwd) ||
     `Claude ${shortId(cliSessionId)}`;
-  const resolvedCwd = cwd || transcript?.cwd || "";
   return {
-    key: `claude:${sessionId}:${cliSessionId}`,
+    key: `claude:${record.sessionId}:${cliSessionId}`,
     source: "claude",
     appName: "Claude",
-    sessionId,
+    sessionId: record.sessionId,
     cliSessionId,
     title,
     cwd: resolvedCwd,
     cwdExists: resolvedCwd ? existsSync(resolvedCwd) : false,
     appPid: app.processId,
-    workerPid: process.processId,
-    lastActivity: transcript?.lastActivity ?? toIso(record?.lastActivityAt),
-    model: record?.model ?? transcript?.model,
-    effort: record?.effort,
+    workerPid: worker?.processId,
+    lastActivity,
+    model: record.model ?? transcript?.model,
+    effort: record.effort,
     transcriptFile: transcript?.filePath,
     lastPrompt: transcript?.lastPrompt,
-    activityState: transcript?.activityState ?? "active",
+    activityState: transcript?.activityState ?? activityStateFor(lastActivity),
     turns: transcript?.turns ?? EMPTY_TURNS,
     tokens: transcript?.tokens ?? EMPTY_TOKENS,
     usage: transcript?.usage ?? EMPTY_USAGE,
@@ -511,6 +595,25 @@ function buildClaudeSession(
       note: "Opens the Claude desktop Claude Code resume route.",
     },
   };
+}
+
+function buildClaudeSession(
+  process: NativeProcessInfo,
+  app: NativeAppInfo,
+  appSessions: ClaudeAppSessionRecord[],
+  transcripts: SessionSummary[],
+): OpenAppSession | null {
+  const cliSessionId = commandArg(process.commandLine, "--resume");
+  if (!cliSessionId) return null;
+  const record = chooseClaudeAppSession(appSessions, cliSessionId);
+  if (record) return buildClaudeRecordSession(record, app, transcripts, process);
+  const fallback: ClaudeAppSessionRecord = {
+    sessionId: cliSessionId,
+    cliSessionId,
+    cwd: commandArg(process.commandLine, "--cwd"),
+    filePath: "",
+  };
+  return buildClaudeRecordSession(fallback, app, transcripts, process);
 }
 
 function groupByFolder(sessions: OpenAppSession[]): OpenFolderGroup[] {
@@ -575,13 +678,36 @@ export function getNativeSessionPayload(): NativeSessionsPayload {
   const transcripts = scanAllSessions();
   const claudeAppRoot = findClaudeAppSessionRoot();
   const claudeAppSessions = readClaudeAppSessions(claudeAppRoot);
+  const codexWorkers = processes.filter(isCodexWorkerProcess);
+  const claudeWorkers = processes.filter(isClaudeWorkerProcess);
+  const codexWorkerBySession = new Map(
+    codexWorkers
+      .map((process) => [commandArg(process.commandLine, "--session-id"), process] as const)
+      .filter((entry): entry is readonly [string, NativeProcessInfo] => Boolean(entry[0])),
+  );
+  const claudeWorkerByCliSession = new Map(
+    claudeWorkers
+      .map((process) => [commandArg(process.commandLine, "--resume"), process] as const)
+      .filter((entry): entry is readonly [string, NativeProcessInfo] => Boolean(entry[0])),
+  );
 
   const rawSessions = [
-    ...processes
-      .filter(isCodexWorkerProcess)
+    ...uniqueCodexTranscripts(transcripts).map((session) =>
+      buildCodexTranscriptSession(session, apps.codex, codexWorkerBySession.get(session.sessionId)),
+    ),
+    ...codexWorkers
       .map((process) => buildCodexSession(process, apps.codex, transcripts)),
-    ...processes
-      .filter(isClaudeWorkerProcess)
+    ...uniqueClaudeAppSessions(claudeAppSessions)
+      .slice(0, RECENT_CLAUDE_APP_LIMIT)
+      .map((record) =>
+        buildClaudeRecordSession(
+          record,
+          apps.claude,
+          transcripts,
+          record.cliSessionId ? claudeWorkerByCliSession.get(record.cliSessionId) : undefined,
+        ),
+      ),
+    ...claudeWorkers
       .map((process) => buildClaudeSession(process, apps.claude, claudeAppSessions, transcripts)),
   ].filter((session): session is OpenAppSession => Boolean(session));
 
@@ -590,6 +716,7 @@ export function getNativeSessionPayload(): NativeSessionsPayload {
   );
 
   const folders = groupByFolder(sessions);
+  const daemon = daemonStatus();
   return {
     generatedAt: new Date().toISOString(),
     roots: {
@@ -606,6 +733,11 @@ export function getNativeSessionPayload(): NativeSessionsPayload {
       tracked: transcripts.length,
     },
     availability: summarizeAvailability(transcripts),
+    bridge: {
+      daemonRunning: daemon.running,
+      daemonPid: daemon.pid,
+      daemonLog: DAEMON_LOG,
+    },
     folders,
     sessions,
   };

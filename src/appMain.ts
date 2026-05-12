@@ -6,6 +6,7 @@ import { DASHBOARD_HTML } from "./dashboard.js";
 import { getSessionsPayload } from "./sessionPayload.js";
 import { openSession, type OpenSessionRequest } from "./sessionLauncher.js";
 import { CLAUDEX_HOME } from "./paths.js";
+import { daemonStatus, ensureDaemonRunning } from "./daemonSupervisor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -50,10 +51,10 @@ function createWindow(): void {
   writeFileSync(htmlPath, DASHBOARD_HTML, "utf8");
 
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 620,
-    minWidth: 720,
-    minHeight: 500,
+    width: 760,
+    height: 640,
+    minWidth: 520,
+    minHeight: 520,
     title: "Claudex",
     backgroundColor: "#0f1114",
     autoHideMenuBar: true,
@@ -97,6 +98,8 @@ function focusMainWindow(): void {
 
 ipcMain.handle("claudex:sessions", () => {
   appLog("sessions requested");
+  const daemon = ensureDaemonRunning();
+  if (daemon.started) appLog(`daemon restarted from app pid=${daemon.pid ?? "unknown"}`);
   const started = Date.now();
   const payload = getSessionsPayload();
   appLog(`sessions returned in ${Date.now() - started}ms`);
@@ -104,8 +107,10 @@ ipcMain.handle("claudex:sessions", () => {
 });
 ipcMain.handle("claudex:open", (_event, request: OpenSessionRequest) => {
   appLog(`open requested: ${request?.source ?? "unknown"} ${request?.target ?? "native"}`);
+  ensureDaemonRunning();
   return openSession(request);
 });
+ipcMain.handle("claudex:health", () => daemonStatus());
 
 app.setName("Claudex");
 
@@ -122,6 +127,8 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
     appLog("app ready");
+    const daemon = ensureDaemonRunning();
+    if (daemon.started) appLog(`daemon started from app pid=${daemon.pid ?? "unknown"}`);
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

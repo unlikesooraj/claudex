@@ -1,6 +1,14 @@
 import chokidar from "chokidar";
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  appendFileSync,
+  createReadStream,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseClaudeLine } from "./parsers/claude.js";
 import { parseCodexLine, makeCodexState, type CodexParseState } from "./parsers/codex.js";
@@ -22,6 +30,7 @@ interface FileCursor {
 }
 
 const cursors = new Map<string, FileCursor>();
+const HEALTH_FILE = join(CLAUDEX_HOME, "daemon-health.json");
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -147,9 +156,86 @@ function writePidFile(): void {
   writeFileSync(DAEMON_PID, String(process.pid), "utf8");
 }
 
+function readPidFile(): number | undefined {
+  try {
+    const pid = Number(readFileSync(DAEMON_PID, "utf8").trim());
+    return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pidIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function anotherDaemonIsRunning(): boolean {
+  const pid = readPidFile();
+  if (!pid || pid === process.pid) return false;
+  if (pidIsRunning(pid)) {
+    log(`daemon already running (pid ${pid}); exiting duplicate pid ${process.pid}`);
+    return true;
+  }
+  return false;
+}
+
+function writeHealth(extra: Record<string, unknown> = {}): void {
+  try {
+    writeFileSync(
+      HEALTH_FILE,
+      JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString(), ...extra }, null, 2),
+      "utf8",
+    );
+  } catch {
+    // best effort
+  }
+}
+
+function walkJsonl(root: string): string[] {
+  const out: string[] = [];
+  function recur(dir: string): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry);
+      let stats;
+      try {
+        stats = statSync(path);
+      } catch {
+        continue;
+      }
+      if (stats.isDirectory()) recur(path);
+      else if (stats.isFile() && path.endsWith(".jsonl")) out.push(path);
+    }
+  }
+  recur(root);
+  return out;
+}
+
+async function sweepExistingFiles(): Promise<void> {
+  const claudeFiles = walkJsonl(CLAUDE_PROJECTS_DIR);
+  const codexFiles = walkJsonl(CODEX_SESSIONS_DIR);
+  for (const file of claudeFiles) await handleClaudeFile(file);
+  for (const file of codexFiles) await handleCodexFile(file);
+  writeHealth({ lastSweepAt: new Date().toISOString(), claudeFiles: claudeFiles.length, codexFiles: codexFiles.length });
+}
+
 export async function startDaemon(): Promise<void> {
   mkdirSync(CLAUDEX_HOME, { recursive: true });
+  mkdirSync(CLAUDE_PROJECTS_DIR, { recursive: true });
+  mkdirSync(CODEX_SESSIONS_DIR, { recursive: true });
+  if (anotherDaemonIsRunning()) return;
   writePidFile();
+  writeHealth({ state: "starting" });
   log(`claudex daemon starting (pid ${process.pid})`);
   log(`  watching claude: ${CLAUDE_PROJECTS_DIR}`);
   log(`  watching codex:  ${CODEX_SESSIONS_DIR}`);
@@ -174,11 +260,25 @@ export async function startDaemon(): Promise<void> {
   };
   claudeWatcher.on("add", onClaude).on("change", onClaude);
   codexWatcher.on("add", onCodex).on("change", onCodex);
-  claudeWatcher.on("ready", () => log("  claude watcher ready"));
-  codexWatcher.on("ready", () => log("  codex watcher ready"));
+  claudeWatcher.on("ready", () => {
+    log("  claude watcher ready");
+    writeHealth({ claudeReady: true });
+  });
+  codexWatcher.on("ready", () => {
+    log("  codex watcher ready");
+    writeHealth({ codexReady: true });
+  });
+  claudeWatcher.on("error", (err) => log(`claude watcher error: ${err}`));
+  codexWatcher.on("error", (err) => log(`codex watcher error: ${err}`));
+
+  setInterval(() => {
+    void sweepExistingFiles().catch((err) => log(`periodic sweep failed: ${err?.stack ?? err}`));
+  }, 30_000).unref();
+  void sweepExistingFiles().catch((err) => log(`initial sweep failed: ${err?.stack ?? err}`));
 
   process.on("SIGINT", () => {
     log("daemon stopping");
+    writeHealth({ state: "stopping" });
     process.exit(0);
   });
 }
@@ -193,3 +293,11 @@ if (import.meta.url === entryUrl) {
     process.exit(1);
   });
 }
+
+process.on("uncaughtException", (err) => {
+  log(`uncaughtException: ${err.stack ?? err.message}`);
+});
+
+process.on("unhandledRejection", (err) => {
+  log(`unhandledRejection: ${String(err)}`);
+});

@@ -88,7 +88,7 @@ function handle(req: JsonRpcRequest): JsonRpcResponse | null {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "claudex", version: "0.2.3" },
+        serverInfo: { name: "claudex", version: "0.2.4" },
       },
     };
   }

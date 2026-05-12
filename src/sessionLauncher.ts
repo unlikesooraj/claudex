@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import { findOpenAppSession, type NativeAppInfo, type OpenAppSession } from "./nativeSessions.js";
 import { type SessionSource } from "./sessionIndex.js";
+import { ensureDaemonRunning } from "./daemonSupervisor.js";
+import { prepareCrossToolHandoff } from "./handoff.js";
 
 export interface OpenSessionRequest {
   source?: SessionSource;
@@ -91,9 +93,10 @@ function claudeResumeUrl(session: OpenAppSession): string {
   return `claude://resume?session=${encodeURIComponent(cliSessionId)}`;
 }
 
-function claudeCodeNewUrl(cwd?: string): string {
+function claudeCodeNewUrl(cwd?: string, prompt?: string): string {
   const params = new URLSearchParams();
   if (cwd) params.set("folder", cwd);
+  if (prompt) params.set("q", prompt);
   const query = params.toString();
   return `claude://code/new${query ? `?${query}` : ""}`;
 }
@@ -115,6 +118,7 @@ function openClaudeChat(session: OpenAppSession): OpenSessionResult {
 }
 
 function openCodexProject(session: OpenAppSession, app: NativeAppInfo): OpenSessionResult {
+  const handoff = prepareCrossToolHandoff(session, "codex");
   if (session.cwdExists && app.executablePath && existsSync(app.executablePath)) {
     spawnDetached(app.executablePath, ["--open-project", session.cwd], session.cwd);
     focusWindow("Codex");
@@ -126,7 +130,9 @@ function openCodexProject(session: OpenAppSession, app: NativeAppInfo): OpenSess
       action: "open-project",
       exact: false,
       launched: `${app.executablePath} --open-project ${session.cwd}`,
-      note: "Opened the connected folder in Codex desktop.",
+      note: handoff.ok
+        ? "Opened Codex with the Claudex handoff attached to the folder."
+        : "Opened the connected folder in Codex desktop.",
     };
   }
   startUri("codex:");
@@ -144,7 +150,8 @@ function openCodexProject(session: OpenAppSession, app: NativeAppInfo): OpenSess
 }
 
 function openClaudeApp(session: OpenAppSession): OpenSessionResult {
-  const uri = session.cwdExists ? claudeCodeNewUrl(session.cwd) : "claude:";
+  const handoff = prepareCrossToolHandoff(session, "claude");
+  const uri = session.cwdExists ? claudeCodeNewUrl(session.cwd, handoff.prompt) : "claude:";
   startUri(uri);
   focusWindow("Claude");
   return {
@@ -155,8 +162,8 @@ function openClaudeApp(session: OpenAppSession): OpenSessionResult {
     action: session.cwdExists ? "open-project" : "focus-app",
     exact: false,
     launched: uri,
-    note: session.cwdExists
-      ? "Opened Claude desktop with the connected folder."
+    note: session.cwdExists && handoff.ok
+      ? "Opened Claude with the Claudex handoff attached to the folder."
       : "Opened Claude desktop.",
   };
 }
@@ -170,6 +177,7 @@ export function openSession(request: OpenSessionRequest): OpenSessionResult {
     return { ok: false, error: "source and sessionId are required." };
   }
 
+  ensureDaemonRunning();
   const { payload, session } = findOpenAppSession(request.source, request.sessionId);
   if (!session) {
     return {
