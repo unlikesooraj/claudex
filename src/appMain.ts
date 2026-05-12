@@ -28,12 +28,12 @@ function createWindow(): void {
   writeFileSync(htmlPath, DASHBOARD_HTML, "utf8");
 
   mainWindow = new BrowserWindow({
-    width: 980,
-    height: 720,
-    minWidth: 760,
-    minHeight: 560,
+    width: 940,
+    height: 620,
+    minWidth: 720,
+    minHeight: 500,
     title: "Claudex",
-    backgroundColor: "#0d1115",
+    backgroundColor: "#0f1114",
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, "appPreload.js"),
