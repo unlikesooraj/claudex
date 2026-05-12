@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Claudex auto-writes these into every working dir it watches — they hold
+# the user's own session history and should never be committed.
+.claudex/
+AGENTS.md
+

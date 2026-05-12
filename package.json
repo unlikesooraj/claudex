@@ -1,0 +1,75 @@
+{
+  "name": "claudex",
+  "version": "0.1.2",
+  "description": "Connect Claude Code with Codex CLI. Local session bridge that lets Claude Code and OpenAI Codex CLI share context across sessions — switch tools mid-thought, never lose your place. Auto-syncs via AGENTS.md, SessionStart / UserPromptSubmit hooks, and a built-in MCP server. No API keys, no cloud.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "claudex": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "daemon": "node dist/daemon.js",
+    "test": "node --test dist/test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "codex-cli",
+    "openai-codex",
+    "anthropic",
+    "claude",
+    "agentic-cli",
+    "ai-coding",
+    "ai-coding-assistant",
+    "coding-agent",
+    "agent-memory",
+    "session-bridge",
+    "session-handoff",
+    "context-handoff",
+    "context-bridge",
+    "context-sharing",
+    "cross-tool",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "agents-md",
+    "claude-md",
+    "hooks",
+    "session-management",
+    "rate-limit",
+    "rolling-context",
+    "subagent",
+    "developer-tools",
+    "cli",
+    "nodejs",
+    "typescript",
+    "claude-mem",
+    "hydra"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.1",
+    "js-tiktoken": "^1.0.16",
+    "smol-toml": "^1.3.0",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  },
+  "files": [
+    "dist",
+    "hooks",
+    "installers",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unlikesooraj/claudex"
+  }
+}
